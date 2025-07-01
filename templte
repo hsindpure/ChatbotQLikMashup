@@ -1,45 +1,85 @@
-<!-- template.html - HTML Template -->
-<div class="qlik-chatbot">
+<div class="qlik-chatbot-extension">
     <!-- Chatbot Toggle Button -->
-    <div id="chatbot-toggle" class="chatbot-toggle">
-        <i class="fa fa-comments"></i>
+    <div class="chatbot-toggle" title="Open AI Assistant">
+        <div class="chatbot-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM12 20C7.59 20 4 16.41 4 12C4 7.59 7.59 4 12 4C16.41 4 20 7.59 20 12C20 16.41 16.41 20 12 20Z" fill="currentColor"/>
+                <path d="M8 11H11V14H8V11ZM13 11H16V14H13V11Z" fill="currentColor"/>
+                <path d="M8 16H16V18H8V16Z" fill="currentColor"/>
+            </svg>
+        </div>
+        <div class="pulse-ring"></div>
     </div>
 
     <!-- Chatbot Container -->
-    <div id="chatbot-container" class="chatbot-container">
-        <!-- Header -->
+    <div class="chatbot-container">
         <div class="chatbot-header">
-            <h3 id="chatbot-header-title">QlikSense AI Assistant</h3>
-            <div class="header-controls">
-                <select id="role-select" class="role-select">
-                    <option value="Analyst">Analyst</option>
-                    <option value="HR">HR</option>
-                    <option value="Manager">Manager</option>
-                </select>
-                <button id="clear-selections" class="control-btn" title="Clear Selections">
-                    <i class="fa fa-refresh"></i>
+            <div class="header-content">
+                <div class="app-info">
+                    <span class="app-icon">📊</span>
+                    <span class="app-name">{{ appName }}</span>
+                </div>
+                <div class="header-controls">
+                    <select class="role-select">
+                        <option value="Analyst">Analyst</option>
+                        <option value="HR">HR</option>
+                        <option value="Manager">Manager</option>
+                        <option value="Executive">Executive</option>
+                    </select>
+                    <button class="download-history" title="Download Chat History">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M19 9H15L12 12L9 9H5V19H19V9Z" fill="currentColor"/>
+                            <path d="M5 5V7H19V5H5Z" fill="currentColor"/>
+                        </svg>
+                    </button>
+                    <button class="chatbot-close" title="Close">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M19 6.41L17.59 5L12 10.59L6.41 5L5 6.41L10.59 12L5 17.59L6.41 19L12 13.41L17.59 19L19 17.59L13.41 12L19 6.41Z" fill="currentColor"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="chatbot-body">
+            <div class="chat-messages"></div>
+            
+            <div class="quick-actions">
+                <button class="quick-action" onclick="this.closest('.qlik-chatbot-extension').querySelector('.chat-input').value='Show me a summary of the data'; this.closest('.qlik-chatbot-extension').querySelector('.send-button').click();">
+                    📈 Data Summary
                 </button>
-                <button id="download-history" class="control-btn" title="Download History">
-                    <i class="fa fa-download"></i>
+                <button class="quick-action" onclick="this.closest('.qlik-chatbot-extension').querySelector('.chat-input').value='What are the key insights?'; this.closest('.qlik-chatbot-extension').querySelector('.send-button').click();">
+                    💡 Key Insights
                 </button>
-                <button id="close-chatbot" class="close-btn">
-                    <i class="fa fa-times"></i>
+                <button class="quick-action" onclick="this.closest('.qlik-chatbot-extension').querySelector('.chat-input').value='Create a chart showing trends'; this.closest('.qlik-chatbot-extension').querySelector('.send-button').click();">
+                    📊 Create Chart
+                </button>
+                <button class="quick-action" ng-click="clearAllSelections()">
+                    🗂️ Clear Filters
                 </button>
             </div>
         </div>
 
-        <!-- Messages -->
-        <div id="chat-messages" class="chat-messages"></div>
-
-        <!-- Input Area -->
-        <div class="chat-input-area">
-            <input type="text" id="chat-input" placeholder="Ask me anything about your data..." />
-            <button id="voice-btn" class="voice-btn" title="Voice Input">
-                <i class="fa fa-microphone"></i>
-            </button>
-            <button id="send-btn" class="send-btn">
-                <i class="fa fa-paper-plane"></i>
-            </button>
+        <div class="chatbot-footer">
+            <div class="input-container">
+                <input type="text" class="chat-input" placeholder="Ask me anything about your data..." maxlength="500">
+                <button class="voice-button" title="Voice Input">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M12 1C10.34 1 9 2.34 9 4V12C9 13.66 10.34 15 12 15C13.66 15 15 13.66 15 12V4C15 2.34 13.66 1 12 1Z" fill="currentColor"/>
+                        <path d="M19 10V12C19 16.42 15.42 20 11 20H13C17.42 20 21 16.42 21 12V10H19Z" fill="currentColor"/>
+                        <path d="M5 10V12C5 16.42 8.58 20 13 20H11C6.58 20 3 16.42 3 12V10H5Z" fill="currentColor"/>
+                        <path d="M11 22H13V24H11V22Z" fill="currentColor"/>
+                    </svg>
+                </button>
+                <button class="send-button" title="Send Message">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M2.01 21L23 12L2.01 3L2 10L17 12L2 14L2.01 21Z" fill="currentColor"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="footer-info">
+                <span class="powered-by">Powered by AI • QlikSense Integration</span>
+            </div>
         </div>
     </div>
 </div>
