@@ -1,0 +1,45 @@
+<!-- template.html - HTML Template -->
+<div class="qlik-chatbot">
+    <!-- Chatbot Toggle Button -->
+    <div id="chatbot-toggle" class="chatbot-toggle">
+        <i class="fa fa-comments"></i>
+    </div>
+
+    <!-- Chatbot Container -->
+    <div id="chatbot-container" class="chatbot-container">
+        <!-- Header -->
+        <div class="chatbot-header">
+            <h3 id="chatbot-header-title">QlikSense AI Assistant</h3>
+            <div class="header-controls">
+                <select id="role-select" class="role-select">
+                    <option value="Analyst">Analyst</option>
+                    <option value="HR">HR</option>
+                    <option value="Manager">Manager</option>
+                </select>
+                <button id="clear-selections" class="control-btn" title="Clear Selections">
+                    <i class="fa fa-refresh"></i>
+                </button>
+                <button id="download-history" class="control-btn" title="Download History">
+                    <i class="fa fa-download"></i>
+                </button>
+                <button id="close-chatbot" class="close-btn">
+                    <i class="fa fa-times"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Messages -->
+        <div id="chat-messages" class="chat-messages"></div>
+
+        <!-- Input Area -->
+        <div class="chat-input-area">
+            <input type="text" id="chat-input" placeholder="Ask me anything about your data..." />
+            <button id="voice-btn" class="voice-btn" title="Voice Input">
+                <i class="fa fa-microphone"></i>
+            </button>
+            <button id="send-btn" class="send-btn">
+                <i class="fa fa-paper-plane"></i>
+            </button>
+        </div>
+    </div>
+</div>
