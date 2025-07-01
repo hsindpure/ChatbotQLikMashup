@@ -1,4 +1,3 @@
-// qlik-ai-chatbot.js - Main Extension File
 define([
     'jquery',
     'qlik',
@@ -8,32 +7,21 @@ define([
 ], function($, qlik, props, template, cssContent) {
     'use strict';
 
-    // Add CSS to head
+    // Add CSS to document head
     $('<style>').html(cssContent).appendTo('head');
 
     return {
-        definition: props,
         template: template,
-        support: {
-            snapshot: false,
-            export: false,
-            exportData: false
-        },
+        definition: props,
         
-        paint: function($element, layout) {
-            var app = qlik.currApp();
-            var chatHistory = [];
-            var currentUser = layout.qlik.user || 'User';
-            var appName = '';
-            var selectedRole = 'Analyst';
-            var isRecording = false;
-            var recognition = null;
-
-            // Get app name
-            app.getAppLayout().then(function(appLayout) {
-                appName = appLayout.qTitle;
-                $('#chatbot-header-title').text(appName);
-            });
+        controller: ['$scope', '$element', function($scope, $element) {
+            const app = qlik.currApp();
+            let hypercubeData = {};
+            let chatHistory = [];
+            let currentUser = 'User'; // This should be fetched from QlikSense session
+            let selectedRole = 'Analyst';
+            let isListening = false;
+            let recognition;
 
             // Initialize Speech Recognition
             if ('webkitSpeechRecognition' in window) {
@@ -41,355 +29,370 @@ define([
                 recognition.continuous = false;
                 recognition.interimResults = false;
                 recognition.lang = 'en-US';
-                
-                recognition.onresult = function(event) {
-                    var transcript = event.results[0][0].transcript;
-                    $('#chat-input').val(transcript);
-                    isRecording = false;
-                    $('#voice-btn').removeClass('recording');
-                };
-                
-                recognition.onerror = function(event) {
-                    console.error('Speech recognition error:', event.error);
-                    isRecording = false;
-                    $('#voice-btn').removeClass('recording');
-                };
             }
 
-            // Chatbot functionality
-            function initChatbot() {
+            // Fetch app data on initialization
+            $scope.$watch('layout', function(newVal) {
+                if (newVal) {
+                    fetchAppData();
+                    initializeChatbot();
+                }
+            });
+
+            function fetchAppData() {
+                // Get app info
+                app.getAppLayout().then(function(layout) {
+                    $scope.appName = layout.qTitle || 'QlikSense App';
+                    $scope.$apply();
+                });
+
+                // Create hypercube to fetch all app data
+                const hypercubeDef = {
+                    qDimensions: [],
+                    qMeasures: [],
+                    qInitialDataFetch: [{
+                        qTop: 0,
+                        qLeft: 0,
+                        qHeight: 1000,
+                        qWidth: 50
+                    }]
+                };
+
+                // Get all fields and create dimensions/measures
+                app.getList('FieldList').then(function(reply) {
+                    const fields = reply.qFieldList.qItems;
+                    
+                    fields.forEach(function(field, index) {
+                        if (index < 20) { // Limit to prevent too much data
+                            if (field.qCardinal < 100) { // Use as dimension if low cardinality
+                                hypercubeDef.qDimensions.push({
+                                    qDef: {
+                                        qFieldDefs: [field.qName],
+                                        qSortCriterias: [{
+                                            qSortByState: 1,
+                                            qSortByAscii: 1
+                                        }]
+                                    }
+                                });
+                            } else { // Use as measure if high cardinality
+                                hypercubeDef.qMeasures.push({
+                                    qDef: {
+                                        qDef: `Sum([${field.qName}])`,
+                                        qLabel: field.qName
+                                    }
+                                });
+                            }
+                        }
+                    });
+
+                    // Create hypercube object
+                    app.createCube(hypercubeDef).then(function(model) {
+                        model.getLayout().then(function(layout) {
+                            hypercubeData = {
+                                dimensions: layout.qHyperCube.qDimensionInfo,
+                                measures: layout.qHyperCube.qMeasureInfo,
+                                data: layout.qHyperCube.qDataPages[0] ? layout.qHyperCube.qDataPages[0].qMatrix : []
+                            };
+                        });
+                    });
+                });
+            }
+
+            function initializeChatbot() {
+                const $chatbot = $element.find('.chatbot-container');
+                const $toggle = $element.find('.chatbot-toggle');
+                const $close = $element.find('.chatbot-close');
+                const $sendBtn = $element.find('.send-button');
+                const $input = $element.find('.chat-input');
+                const $voiceBtn = $element.find('.voice-button');
+                const $roleSelect = $element.find('.role-select');
+                const $downloadBtn = $element.find('.download-history');
+
                 // Toggle chatbot
-                $('#chatbot-toggle').click(function() {
-                    $('#chatbot-container').toggleClass('active');
+                $toggle.on('click', function() {
+                    $chatbot.addClass('active');
+                    $input.focus();
                 });
 
                 // Close chatbot
-                $('#close-chatbot').click(function() {
-                    $('#chatbot-container').removeClass('active');
-                });
-
-                // Role selection
-                $('#role-select').change(function() {
-                    selectedRole = $(this).val();
-                    addMessage('system', `Role changed to ${selectedRole}`, 'System');
-                });
-
-                // Voice input
-                $('#voice-btn').click(function() {
-                    if (recognition && !isRecording) {
-                        isRecording = true;
-                        $(this).addClass('recording');
-                        recognition.start();
-                    }
+                $close.on('click', function() {
+                    $chatbot.removeClass('active');
                 });
 
                 // Send message
-                $('#send-btn, #chat-input').on('click keypress', function(e) {
-                    if (e.type === 'click' || e.which === 13) {
+                $sendBtn.on('click', sendMessage);
+                $input.on('keypress', function(e) {
+                    if (e.which === 13) {
                         sendMessage();
                     }
                 });
 
-                // Download chat history
-                $('#download-history').click(function() {
-                    downloadChatHistory();
+                // Voice input
+                $voiceBtn.on('click', toggleVoiceInput);
+
+                // Role selection
+                $roleSelect.on('change', function() {
+                    selectedRole = $(this).val();
+                    addMessage('system', `Role changed to: ${selectedRole}`);
                 });
 
-                // Clear selections
-                $('#clear-selections').click(function() {
-                    app.clearAll();
-                    addMessage('system', 'All selections cleared', 'System');
-                });
+                // Download history
+                $downloadBtn.on('click', downloadChatHistory);
+
+                // Initialize with welcome message
+                addMessage('bot', `Hello! I'm your AI assistant for ${$scope.appName || 'this QlikSense app'}. How can I help you analyze your data today?`);
             }
 
             function sendMessage() {
-                var message = $('#chat-input').val().trim();
+                const $input = $element.find('.chat-input');
+                const message = $input.val().trim();
+                
                 if (!message) return;
 
                 // Add user message
-                addMessage('user', message, currentUser);
-                $('#chat-input').val('');
+                addMessage('user', message);
+                $input.val('');
 
                 // Show typing indicator
                 showTypingIndicator();
 
-                // Process message
-                processUserQuery(message);
+                // Send to AI API
+                processWithAI(message);
             }
 
-            function addMessage(type, message, sender) {
-                var timestamp = new Date().toLocaleTimeString();
-                var messageHtml = `
-                    <div class="message ${type}">
-                        <div class="message-header">
-                            <span class="sender">${sender}</span>
-                            <span class="timestamp">${timestamp}</span>
-                        </div>
-                        <div class="message-content">${message}</div>
-                    </div>
-                `;
+            function processWithAI(query) {
+                const payload = {
+                    prompt: `You are a ${selectedRole} assistant for QlikSense data analysis. Analyze the provided data and answer the user's question. If the user asks for charts or tables, respond with a JSON structure that can be used to create visualizations.`,
+                    data: hypercubeData,
+                    query: query,
+                    role: selectedRole,
+                    appName: $scope.appName
+                };
+
+                // Replace with your actual AI API endpoint
+                $.ajax({
+                    url: 'YOUR_AI_API_ENDPOINT', // Replace with actual endpoint
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer YOUR_API_KEY' // Replace with actual API key
+                    },
+                    data: JSON.stringify(payload),
+                    success: function(response) {
+                        hideTypingIndicator();
+                        
+                        let aiResponse = response.answer || response.message || 'I apologize, but I cannot process your request at the moment.';
+                        
+                        // Check if response contains chart/table data
+                        if (response.chart || response.table) {
+                            aiResponse += '\n\n' + generateVisualization(response.chart || response.table);
+                        }
+                        
+                        addMessage('bot', aiResponse);
+                        
+                        // Apply any QlikSense actions if suggested
+                        if (response.qlikActions) {
+                            executeQlikActions(response.qlikActions);
+                        }
+                    },
+                    error: function() {
+                        hideTypingIndicator();
+                        addMessage('bot', 'I apologize, but I encountered an error processing your request. Please try again.');
+                    }
+                });
+            }
+
+            function executeQlikActions(actions) {
+                actions.forEach(function(action) {
+                    switch(action.type) {
+                        case 'clearSelections':
+                            app.clearAll();
+                            break;
+                        case 'selectValues':
+                            app.field(action.field).selectValues(action.values);
+                            break;
+                        case 'selectPossible':
+                            app.field(action.field).selectPossible();
+                            break;
+                        case 'selectAlternative':
+                            app.field(action.field).selectAlternative();
+                            break;
+                    }
+                });
+            }
+
+            function generateVisualization(data) {
+                // This would generate HTML for charts/tables
+                // For now, return a simple table structure
+                if (data.type === 'table') {
+                    let html = '<div class="ai-table"><table class="data-table">';
+                    
+                    // Headers
+                    html += '<thead><tr>';
+                    data.headers.forEach(function(header) {
+                        html += `<th>${header}</th>`;
+                    });
+                    html += '</tr></thead>';
+                    
+                    // Data rows
+                    html += '<tbody>';
+                    data.rows.forEach(function(row) {
+                        html += '<tr>';
+                        row.forEach(function(cell) {
+                            html += `<td>${cell}</td>`;
+                        });
+                        html += '</tr>';
+                    });
+                    html += '</tbody></table></div>';
+                    
+                    return html;
+                }
                 
-                $('#chat-messages').append(messageHtml);
-                $('#chat-messages').scrollTop($('#chat-messages')[0].scrollHeight);
+                return '<div class="visualization-placeholder">Chart visualization would appear here</div>';
+            }
+
+            function addMessage(type, message) {
+                const $messages = $element.find('.chat-messages');
+                const timestamp = new Date().toLocaleTimeString();
                 
-                // Store in history
-                chatHistory.push({
+                const messageObj = {
                     type: type,
                     message: message,
-                    sender: sender,
-                    timestamp: timestamp
-                });
+                    timestamp: timestamp,
+                    user: type === 'user' ? currentUser : 'AI Assistant',
+                    role: selectedRole
+                };
+                
+                chatHistory.push(messageObj);
+                
+                let messageHtml;
+                if (type === 'user') {
+                    messageHtml = `
+                        <div class="message user-message">
+                            <div class="message-content">
+                                <div class="message-header">
+                                    <span class="user-icon">👤</span>
+                                    <span class="user-name">${currentUser}</span>
+                                    <span class="timestamp">${timestamp}</span>
+                                </div>
+                                <div class="message-text">${message}</div>
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    messageHtml = `
+                        <div class="message bot-message">
+                            <div class="message-content">
+                                <div class="message-header">
+                                    <span class="bot-icon">🤖</span>
+                                    <span class="bot-name">AI Assistant (${selectedRole})</span>
+                                    <span class="timestamp">${timestamp}</span>
+                                </div>
+                                <div class="message-text">${message}</div>
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                $messages.append(messageHtml);
+                $messages.scrollTop($messages[0].scrollHeight);
             }
 
             function showTypingIndicator() {
-                var typingHtml = `
-                    <div class="message bot typing-indicator">
-                        <div class="message-header">
-                            <span class="sender">AI Assistant</span>
-                        </div>
+                const $messages = $element.find('.chat-messages');
+                $messages.append(`
+                    <div class="message bot-message typing-indicator">
                         <div class="message-content">
-                            <div class="typing-dots">
+                            <div class="typing-animation">
                                 <span></span>
                                 <span></span>
                                 <span></span>
                             </div>
                         </div>
                     </div>
-                `;
-                $('#chat-messages').append(typingHtml);
-                $('#chat-messages').scrollTop($('#chat-messages')[0].scrollHeight);
+                `);
+                $messages.scrollTop($messages[0].scrollHeight);
             }
 
-            function removeTypingIndicator() {
-                $('.typing-indicator').remove();
+            function hideTypingIndicator() {
+                $element.find('.typing-indicator').remove();
             }
 
-            async function processUserQuery(query) {
-                try {
-                    // Analyze query intent
-                    var intent = analyzeIntent(query);
-                    
-                    // Get QlikSense data based on intent
-                    var qlikData = await getQlikSenseData(intent);
-                    
-                    // Get AI response
-                    var aiResponse = await getAIResponse(query, qlikData, selectedRole);
-                    
-                    removeTypingIndicator();
-                    
-                    // Display response
-                    if (intent.requiresChart) {
-                        displayChartResponse(aiResponse, qlikData);
-                    } else {
-                        addMessage('bot', aiResponse, 'AI Assistant');
-                    }
-                    
-                } catch (error) {
-                    removeTypingIndicator();
-                    addMessage('bot', 'Sorry, I encountered an error processing your request.', 'AI Assistant');
-                    console.error('Error processing query:', error);
-                }
-            }
-
-            function analyzeIntent(query) {
-                var intent = {
-                    requiresChart: false,
-                    requiresFilter: false,
-                    requiresComparison: false,
-                    chartType: null,
-                    fields: []
-                };
-
-                // Simple intent analysis
-                if (query.toLowerCase().includes('chart') || query.toLowerCase().includes('graph')) {
-                    intent.requiresChart = true;
-                    if (query.toLowerCase().includes('bar')) intent.chartType = 'bar';
-                    else if (query.toLowerCase().includes('line')) intent.chartType = 'line';
-                    else if (query.toLowerCase().includes('pie')) intent.chartType = 'pie';
+            function toggleVoiceInput() {
+                if (!recognition) {
+                    addMessage('system', 'Voice recognition is not supported in your browser.');
+                    return;
                 }
 
-                if (query.toLowerCase().includes('filter') || query.toLowerCase().includes('select')) {
-                    intent.requiresFilter = true;
-                }
-
-                if (query.toLowerCase().includes('compare') || query.toLowerCase().includes('benchmark')) {
-                    intent.requiresComparison = true;
-                }
-
-                return intent;
-            }
-
-            async function getQlikSenseData(intent) {
-                try {
-                    // Get current selections
-                    var currentSelections = await app.getList('CurrentSelections');
-                    
-                    // Get field list
-                    var fieldList = await app.getList('FieldList');
-                    
-                    // Create a generic hypercube for data analysis
-                    var hypercube = await app.createCube({
-                        qDimensions: [
-                            { qDef: { qFieldDefs: ['Month'] } },
-                            { qDef: { qFieldDefs: ['Region'] } }
-                        ],
-                        qMeasures: [
-                            { qDef: { qDef: 'Sum(Sales)', qLabel: 'Total Sales' } },
-                            { qDef: { qDef: 'Count(Orders)', qLabel: 'Order Count' } }
-                        ],
-                        qInitialDataFetch: [{ qTop: 0, qLeft: 0, qHeight: 20, qWidth: 4 }]
-                    });
-
-                    var layout = await hypercube.getLayout();
-                    
-                    return {
-                        selections: currentSelections,
-                        fields: fieldList,
-                        data: layout.qHyperCube.qDataPages[0].qMatrix,
-                        dimensions: layout.qHyperCube.qDimensionInfo,
-                        measures: layout.qHyperCube.qMeasureInfo
-                    };
-                    
-                } catch (error) {
-                    console.error('Error getting QlikSense data:', error);
-                    return null;
-                }
-            }
-
-            async function getAIResponse(query, qlikData, role) {
-                // Simulate AI API call
-                // In production, replace with actual AI API endpoint
-                return new Promise((resolve) => {
-                    setTimeout(() => {
-                        var response = generateMockAIResponse(query, qlikData, role);
-                        resolve(response);
-                    }, 1500);
-                });
-            }
-
-            function generateMockAIResponse(query, qlikData, role) {
-                // Mock AI response based on role and data
-                var responses = {
-                    'Analyst': {
-                        sales: 'Based on the current data, sales performance shows a positive trend. The key metrics indicate strong performance in Q3 with a 15% increase compared to market benchmarks.',
-                        default: 'As an analyst, I can help you dive deep into the data patterns and provide statistical insights.'
-                    },
-                    'HR': {
-                        employee: 'From an HR perspective, employee engagement metrics are crucial. Current data shows good retention rates compared to industry standards.',
-                        default: 'As an HR professional, I focus on people analytics and workforce insights.'
-                    },
-                    'Manager': {
-                        overview: 'From a management standpoint, the KPIs are meeting targets. Revenue growth is 8% above industry average.',
-                        default: 'As a manager, I provide strategic insights and performance summaries.'
-                    }
-                };
-
-                var roleResponses = responses[role] || responses['Analyst'];
-                
-                // Simple keyword matching for demo
-                if (query.toLowerCase().includes('sales') || query.toLowerCase().includes('revenue')) {
-                    return roleResponses.sales || roleResponses.default;
-                } else if (query.toLowerCase().includes('employee') || query.toLowerCase().includes('hr')) {
-                    return roleResponses.employee || roleResponses.default;
+                if (isListening) {
+                    recognition.stop();
+                    isListening = false;
+                    $element.find('.voice-button').removeClass('listening');
                 } else {
-                    return roleResponses.default + ' ' + generateDataInsight(qlikData);
+                    recognition.start();
+                    isListening = true;
+                    $element.find('.voice-button').addClass('listening');
                 }
             }
 
-            function generateDataInsight(qlikData) {
-                if (!qlikData || !qlikData.data) return '';
-                
-                var totalSales = 0;
-                var recordCount = qlikData.data.length;
-                
-                qlikData.data.forEach(row => {
-                    if (row[2] && row[2].qNum) {
-                        totalSales += row[2].qNum;
-                    }
-                });
+            if (recognition) {
+                recognition.onresult = function(event) {
+                    const transcript = event.results[0][0].transcript;
+                    $element.find('.chat-input').val(transcript);
+                    isListening = false;
+                    $element.find('.voice-button').removeClass('listening');
+                };
 
-                return `Current dataset contains ${recordCount} records with total sales of ${totalSales.toLocaleString()}.`;
-            }
-
-            function displayChartResponse(response, data) {
-                var chartHtml = `
-                    <div class="message bot">
-                        <div class="message-header">
-                            <span class="sender">AI Assistant</span>
-                            <span class="timestamp">${new Date().toLocaleTimeString()}</span>
-                        </div>
-                        <div class="message-content">
-                            ${response}
-                            <div class="chart-container">
-                                <canvas id="responseChart" width="300" height="200"></canvas>
-                            </div>
-                        </div>
-                    </div>
-                `;
-                
-                $('#chat-messages').append(chartHtml);
-                $('#chat-messages').scrollTop($('#chat-messages')[0].scrollHeight);
-                
-                // Create simple chart (would use Chart.js in production)
-                createSimpleChart(data);
-            }
-
-            function createSimpleChart(data) {
-                // Simple chart creation using canvas
-                var canvas = document.getElementById('responseChart');
-                if (canvas) {
-                    var ctx = canvas.getContext('2d');
-                    ctx.fillStyle = '#4CAF50';
-                    ctx.fillRect(10, 10, 50, 100);
-                    ctx.fillStyle = '#2196F3';
-                    ctx.fillRect(70, 30, 50, 80);
-                    ctx.fillStyle = '#FF9800';
-                    ctx.fillRect(130, 50, 50, 60);
-                    
-                    ctx.fillStyle = '#333';
-                    ctx.font = '12px Arial';
-                    ctx.fillText('Sample Chart', 10, 130);
-                }
+                recognition.onerror = function() {
+                    isListening = false;
+                    $element.find('.voice-button').removeClass('listening');
+                    addMessage('system', 'Voice recognition error. Please try again.');
+                };
             }
 
             function downloadChatHistory() {
                 // Create PDF content
-                var pdfContent = `
-                    <h2>Chat History - ${appName}</h2>
-                    <p>Generated on: ${new Date().toLocaleString()}</p>
-                    <p>Role: ${selectedRole}</p>
-                    <hr>
-                `;
-                
-                chatHistory.forEach(chat => {
-                    pdfContent += `
-                        <div style="margin-bottom: 15px; padding: 10px; border-left: 3px solid ${chat.type === 'user' ? '#4CAF50' : '#2196F3'};">
-                            <strong>${chat.sender}</strong> - ${chat.timestamp}<br>
-                            ${chat.message}
-                        </div>
-                    `;
-                });
+                const pdfContent = chatHistory.map(msg => 
+                    `[${msg.timestamp}] ${msg.user}: ${msg.message}`
+                ).join('\n\n');
 
-                // Create and download PDF (simplified version)
-                var printWindow = window.open('', '_blank');
-                printWindow.document.write(`
-                    <html>
-                        <head><title>Chat History</title></head>
-                        <body>${pdfContent}</body>
-                    </html>
-                `);
-                printWindow.document.close();
-                printWindow.print();
+                // Create and download file
+                const blob = new Blob([pdfContent], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `chatbot_history_${new Date().toISOString().split('T')[0]}.txt`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
             }
 
-            // Initialize chatbot
-            initChatbot();
-            
-            // Add welcome message
-            setTimeout(() => {
-                addMessage('bot', `Welcome to ${appName || 'QlikSense'} AI Assistant! I can help you analyze data, create charts, and provide insights. What would you like to know?`, 'AI Assistant');
-            }, 1000);
+            // QlikSense Capability API functions
+            $scope.clearAllSelections = function() {
+                app.clearAll();
+                addMessage('system', 'All selections cleared.');
+            };
 
+            $scope.getSelectionState = function() {
+                app.getList('SelectionObject').then(function(reply) {
+                    const selections = reply.qSelectionObject.qSelections;
+                    if (selections.length > 0) {
+                        const selectionText = selections.map(s => 
+                            `${s.qField}: ${s.qSelected}`
+                        ).join(', ');
+                        addMessage('system', `Current selections: ${selectionText}`);
+                    } else {
+                        addMessage('system', 'No active selections.');
+                    }
+                });
+            };
+
+            // Initialize scope variables
+            $scope.appName = 'Loading...';
+        }],
+
+        paint: function() {
             return qlik.Promise.resolve();
         }
     };
