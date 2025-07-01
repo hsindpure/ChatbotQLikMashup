@@ -1,0 +1,70 @@
+// properties.js - Properties Configuration
+define([], function() {
+    'use strict';
+    
+    return {
+        type: "items",
+        component: "accordion",
+        items: {
+            settings: {
+                uses: "settings",
+                items: {
+                    aiSettings: {
+                        type: "items",
+                        label: "AI Settings",
+                        items: {
+                            apiEndpoint: {
+                                ref: "props.apiEndpoint",
+                                label: "AI API Endpoint",
+                                type: "string",
+                                defaultValue: "https://api.openai.com/v1/chat/completions"
+                            },
+                            apiKey: {
+                                ref: "props.apiKey",
+                                label: "API Key",
+                                type: "string"
+                            },
+                            enableVoice: {
+                                ref: "props.enableVoice",
+                                label: "Enable Voice Input",
+                                type: "boolean",
+                                defaultValue: true
+                            },
+                            maxChatHistory: {
+                                ref: "props.maxChatHistory",
+                                label: "Max Chat History",
+                                type: "number",
+                                defaultValue: 50
+                            }
+                        }
+                    },
+                    uiSettings: {
+                        type: "items",
+                        label: "UI Settings",
+                        items: {
+                            chatbotPosition: {
+                                ref: "props.chatbotPosition",
+                                label: "Chatbot Position",
+                                type: "string",
+                                component: "dropdown",
+                                options: [
+                                    { value: "bottom-right", label: "Bottom Right" },
+                                    { value: "bottom-left", label: "Bottom Left" },
+                                    { value: "top-right", label: "Top Right" },
+                                    { value: "top-left", label: "Top Left" }
+                                ],
+                                defaultValue: "bottom-right"
+                            },
+                            themeColor: {
+                                ref: "props.themeColor",
+                                label: "Theme Color",
+                                type: "string",
+                                defaultValue: "#667eea"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
+});
