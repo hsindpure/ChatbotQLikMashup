@@ -1,15 +1,341 @@
-/* QlikSense AI Chatbot Extension Styles */
-.qlik-chatbot-extension {
+// QlikSense Chatbot Extension
+define([
+    'qlik',
+    'jquery',
+    'text!./chatbot.css',
+    'text!./chatbot.html'
+], function(qlik, $, cssContent, template) {
+    'use strict';
+
+    // Add CSS to the page
+    $('<style>').html(cssContent).appendTo('head');
+
+    return {
+        definition: {
+            type: "items",
+            component: "accordion",
+            items: {
+                settings: {
+                    uses: "settings",
+                    items: {
+                        apiSettings: {
+                            type: "items",
+                            label: "API Settings",
+                            items: {
+                                openaiApiKey: {
+                                    ref: "openaiApiKey",
+                                    label: "OpenAI API Key",
+                                    type: "string",
+                                    defaultValue: ""
+                                },
+                                chatbotTitle: {
+                                    ref: "chatbotTitle",
+                                    label: "Chatbot Title",
+                                    type: "string",
+                                    defaultValue: "QlikSense AI Assistant"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+
+        paint: function($element, layout) {
+            const app = qlik.currApp();
+            const self = this;
+            
+            // Get app name
+            app.getAppLayout().then(function(appLayout) {
+                const appName = appLayout.qTitle || 'QlikSense App';
+                
+                // Initialize chatbot
+                self.initializeChatbot($element, layout, app, appName);
+            });
+
+            return qlik.Promise.resolve();
+        },
+
+        initializeChatbot: function($element, layout, app, appName) {
+            const self = this;
+            
+            // Clear previous content
+            $element.empty();
+            
+            // Add chatbot HTML
+            const chatbotHtml = `
+                <div id="chatbot-container">
+                    <!-- Chatbot Icon -->
+                    <div id="chatbot-icon" class="chatbot-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM12 18C8.69 18 6 15.31 6 12C6 8.69 8.69 6 12 6C15.31 6 18 8.69 18 12C18 15.31 15.31 18 12 18Z" fill="white"/>
+                            <circle cx="9" cy="10" r="1.5" fill="white"/>
+                            <circle cx="15" cy="10" r="1.5" fill="white"/>
+                            <path d="M8.5 13.5C9.5 15 10.5 15.5 12 15.5C13.5 15.5 14.5 15 15.5 13.5" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+                        </svg>
+                    </div>
+
+                    <!-- Chatbot Window -->
+                    <div id="chatbot-window" class="chatbot-window">
+                        <div class="chatbot-header">
+                            <h3>${layout.chatbotTitle || 'QlikSense AI Assistant'}</h3>
+                            <span class="app-name">${appName}</span>
+                            <button id="close-chatbot" class="close-btn">&times;</button>
+                        </div>
+                        
+                        <div class="chatbot-messages" id="chatbot-messages">
+                            <div class="message bot-message">
+                                <div class="message-content">
+                                    Hello! I'm your QlikSense AI Assistant. I can help you analyze data, create charts, and answer questions about your app. What would you like to know?
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="chatbot-input">
+                            <input type="text" id="user-input" placeholder="Ask me anything about your data..." />
+                            <button id="send-btn">Send</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            $element.html(chatbotHtml);
+
+            // Event handlers
+            $('#chatbot-icon').click(function() {
+                $('#chatbot-window').addClass('active');
+                $('#chatbot-icon').addClass('active');
+            });
+
+            $('#close-chatbot').click(function() {
+                $('#chatbot-window').removeClass('active');
+                $('#chatbot-icon').removeClass('active');
+            });
+
+            $('#send-btn').click(function() {
+                self.sendMessage(app, layout);
+            });
+
+            $('#user-input').keypress(function(e) {
+                if (e.which === 13) {
+                    self.sendMessage(app, layout);
+                }
+            });
+        },
+
+        sendMessage: function(app, layout) {
+            const userInput = $('#user-input').val().trim();
+            if (!userInput) return;
+
+            // Add user message to chat
+            this.addMessage(userInput, 'user');
+            $('#user-input').val('');
+
+            // Show typing indicator
+            this.showTypingIndicator();
+
+            // Process the message
+            this.processMessage(userInput, app, layout);
+        },
+
+        addMessage: function(content, sender) {
+            const messageClass = sender === 'user' ? 'user-message' : 'bot-message';
+            const messageHtml = `
+                <div class="message ${messageClass}">
+                    <div class="message-content">${content}</div>
+                </div>
+            `;
+            $('#chatbot-messages').append(messageHtml);
+            this.scrollToBottom();
+        },
+
+        showTypingIndicator: function() {
+            const typingHtml = `
+                <div class="message bot-message typing-indicator" id="typing">
+                    <div class="message-content">
+                        <div class="typing-dots">
+                            <span></span>
+                            <span></span>
+                            <span></span>
+                        </div>
+                    </div>
+                </div>
+            `;
+            $('#chatbot-messages').append(typingHtml);
+            this.scrollToBottom();
+        },
+
+        removeTypingIndicator: function() {
+            $('#typing').remove();
+        },
+
+        scrollToBottom: function() {
+            const messagesContainer = document.getElementById('chatbot-messages');
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        },
+
+        processMessage: function(userInput, app, layout) {
+            const self = this;
+            
+            // Get QlikSense data context
+            this.getQlikSenseContext(app).then(function(context) {
+                // Send to OpenAI API
+                self.sendToOpenAI(userInput, context, layout).then(function(response) {
+                    self.removeTypingIndicator();
+                    
+                    // Check if response includes chart/table generation request
+                    if (self.shouldGenerateChart(response)) {
+                        self.generateChart(response, app);
+                    } else {
+                        self.addMessage(response, 'bot');
+                    }
+                }).catch(function(error) {
+                    self.removeTypingIndicator();
+                    self.addMessage('Sorry, I encountered an error processing your request. Please try again.', 'bot');
+                    console.error('OpenAI API Error:', error);
+                });
+            });
+        },
+
+        getQlikSenseContext: function(app) {
+            const self = this;
+            return new Promise(function(resolve) {
+                // Get app objects and data
+                app.getAppObjectList().then(function(list) {
+                    const objects = list.qAppObjectList.qItems;
+                    const context = {
+                        appObjects: objects,
+                        objectCount: objects.length,
+                        availableFields: [],
+                        sampleData: {}
+                    };
+
+                    // Get field list
+                    app.getFieldList().then(function(fieldList) {
+                        context.availableFields = fieldList.qFieldList.qItems.map(field => field.qName);
+                        
+                        // Get sample data from a few objects
+                        self.getSampleData(app, objects.slice(0, 3)).then(function(sampleData) {
+                            context.sampleData = sampleData;
+                            resolve(context);
+                        });
+                    });
+                });
+            });
+        },
+
+        getSampleData: function(app, objects) {
+            const promises = objects.map(obj => {
+                return app.getObject(obj.qId).then(function(model) {
+                    return model.getLayout().then(function(layout) {
+                        return {
+                            id: obj.qId,
+                            type: layout.qInfo.qType,
+                            title: layout.qMeta.title || 'Untitled',
+                            data: layout.qHyperCube ? layout.qHyperCube.qDataPages : null
+                        };
+                    });
+                });
+            });
+
+            return Promise.all(promises);
+        },
+
+        sendToOpenAI: function(userInput, context, layout) {
+            const apiKey = layout.openaiApiKey;
+            if (!apiKey) {
+                return Promise.reject('OpenAI API key not configured');
+            }
+
+            const prompt = this.buildPrompt(userInput, context);
+
+            return fetch('https://api.openai.com/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`
+                },
+                body: JSON.stringify({
+                    model: 'gpt-3.5-turbo',
+                    messages: [
+                        {
+                            role: 'system',
+                            content: 'You are a QlikSense data analyst assistant. Help users understand their data, create insights, and suggest visualizations. You can also compare internal data with external market data when relevant.'
+                        },
+                        {
+                            role: 'user',
+                            content: prompt
+                        }
+                    ],
+                    max_tokens: 1000,
+                    temperature: 0.7
+                })
+            }).then(response => response.json())
+              .then(data => {
+                  if (data.choices && data.choices[0]) {
+                      return data.choices[0].message.content;
+                  }
+                  throw new Error('Invalid API response');
+              });
+        },
+
+        buildPrompt: function(userInput, context) {
+            return `
+User Query: ${userInput}
+
+QlikSense App Context:
+- Available Objects: ${context.objectCount}
+- Available Fields: ${context.availableFields.slice(0, 20).join(', ')}
+- Sample Objects: ${JSON.stringify(context.sampleData.map(obj => ({
+    title: obj.title,
+    type: obj.type
+})))}
+
+Please provide a helpful response based on the available QlikSense data. If the user is asking for charts or tables, indicate that in your response. If external market data comparison is relevant, mention that capability.
+            `;
+        },
+
+        shouldGenerateChart: function(response) {
+            const chartKeywords = ['chart', 'table', 'graph', 'visualization', 'plot', 'display data'];
+            return chartKeywords.some(keyword => response.toLowerCase().includes(keyword));
+        },
+
+        generateChart: function(response, app) {
+            const self = this;
+            
+            // Add the text response first
+            self.addMessage(response, 'bot');
+            
+            // Create a simple chart container
+            const chartHtml = `
+                <div class="message bot-message">
+                    <div class="message-content">
+                        <div class="chart-container">
+                            <div id="mini-chart-${Date.now()}" style="width: 100%; height: 200px; background: #f5f5f5; border: 1px solid #ddd; border-radius: 4px; display: flex; align-items: center; justify-content: center;">
+                                <span>Chart visualization would appear here</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            $('#chatbot-messages').append(chartHtml);
+            self.scrollToBottom();
+        }
+    };
+});
+
+// CSS Content
+const cssContent = `
+#chatbot-container {
     position: fixed;
     bottom: 20px;
     right: 20px;
     z-index: 10000;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    font-family: Arial, sans-serif;
 }
 
-/* Chatbot Toggle Button */
-.chatbot-toggle {
-    position: relative;
+.chatbot-icon {
     width: 60px;
     height: 60px;
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -18,329 +344,199 @@
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    color: white;
-    box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3);
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.chatbot-toggle:hover {
-    transform: scale(1.1);
-    box-shadow: 0 12px 35px rgba(102, 126, 234, 0.4);
-}
-
-.chatbot-icon {
-    transition: transform 0.3s ease;
-}
-
-.chatbot-toggle:hover .chatbot-icon {
-    transform: rotate(15deg);
-}
-
-/* Pulse Animation */
-.pulse-ring {
-    position: absolute;
-    width: 60px;
-    height: 60px;
-    border: 3px solid rgba(102, 126, 234, 0.4);
-    border-radius: 50%;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    transition: all 0.3s ease;
     animation: pulse 2s infinite;
 }
 
-@keyframes pulse {
-    0% {
-        transform: scale(1);
-        opacity: 1;
-    }
-    100% {
-        transform: scale(1.8);
-        opacity: 0;
-    }
+.chatbot-icon:hover {
+    transform: scale(1.1);
+    box-shadow: 0 6px 25px rgba(0,0,0,0.2);
 }
 
-/* Chatbot Container */
-.chatbot-container {
+.chatbot-icon.active {
+    transform: scale(0.9);
+}
+
+@keyframes pulse {
+    0% { box-shadow: 0 4px 20px rgba(0,0,0,0.15); }
+    50% { box-shadow: 0 4px 20px rgba(102, 126, 234, 0.4); }
+    100% { box-shadow: 0 4px 20px rgba(0,0,0,0.15); }
+}
+
+.chatbot-window {
     position: absolute;
     bottom: 80px;
     right: 0;
-    width: 380px;
-    height: 600px;
+    width: 400px;
+    height: 500px;
     background: white;
-    border-radius: 20px;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
-    transform: translateY(20px) scale(0.95);
-    opacity: 0;
-    visibility: hidden;
-    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    border-radius: 12px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.2);
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    transform: translateY(20px) scale(0.8);
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.3s ease;
 }
 
-.chatbot-container.active {
+.chatbot-window.active {
     transform: translateY(0) scale(1);
     opacity: 1;
     visibility: visible;
 }
 
-/* Header */
 .chatbot-header {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
-    padding: 16px 20px;
-    border-radius: 20px 20px 0 0;
+    padding: 15px 20px;
+    border-radius: 12px 12px 0 0;
+    position: relative;
 }
 
-.header-content {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-
-.app-info {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-
-.app-icon {
-    font-size: 20px;
+.chatbot-header h3 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
 }
 
 .app-name {
-    font-weight: 600;
-    font-size: 16px;
-}
-
-.header-controls {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.role-select {
-    background: rgba(255, 255, 255, 0.2);
-    border: 1px solid rgba(255, 255, 255, 0.3);
-    color: white;
-    padding: 4px 8px;
-    border-radius: 6px;
     font-size: 12px;
-    outline: none;
+    opacity: 0.8;
+    display: block;
+    margin-top: 4px;
 }
 
-.role-select option {
-    background: #667eea;
-    color: white;
-}
-
-.download-history,
-.chatbot-close {
-    background: rgba(255, 255, 255, 0.2);
+.close-btn {
+    position: absolute;
+    top: 15px;
+    right: 20px;
+    background: none;
     border: none;
     color: white;
-    padding: 6px;
-    border-radius: 6px;
+    font-size: 24px;
     cursor: pointer;
-    transition: background 0.2s ease;
+    line-height: 1;
 }
 
-.download-history:hover,
-.chatbot-close:hover {
-    background: rgba(255, 255, 255, 0.3);
-}
-
-/* Body */
-.chatbot-body {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-}
-
-.chat-messages {
+.chatbot-messages {
     flex: 1;
     padding: 20px;
     overflow-y: auto;
-    background: #f8fafc;
+    max-height: 350px;
 }
 
-.chat-messages::-webkit-scrollbar {
-    width: 6px;
-}
-
-.chat-messages::-webkit-scrollbar-thumb {
-    background: #cbd5e0;
-    border-radius: 3px;
-}
-
-/* Messages */
 .message {
-    margin-bottom: 20px;
-    animation: messageSlide 0.3s ease-out;
+    margin-bottom: 15px;
+    display: flex;
 }
 
-@keyframes messageSlide {
-    from {
-        opacity: 0;
-        transform: translateY(10px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
+.user-message {
+    justify-content: flex-end;
+}
+
+.bot-message {
+    justify-content: flex-start;
 }
 
 .message-content {
-    max-width: 85%;
+    max-width: 80%;
+    padding: 12px 16px;
+    border-radius: 18px;
+    font-size: 14px;
+    line-height: 1.4;
 }
 
 .user-message .message-content {
-    margin-left: auto;
-    background: #667eea;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
-    border-radius: 18px 18px 6px 18px;
-    padding: 12px 16px;
 }
 
 .bot-message .message-content {
-    background: white;
-    color: #2d3748;
-    border-radius: 18px 18px 18px 6px;
-    padding: 12px 16px;
-    border: 1px solid #e2e8f0;
+    background: #f1f3f4;
+    color: #333;
 }
 
-.message-header {
+.chatbot-input {
     display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 6px;
-    font-size: 12px;
-    opacity: 0.8;
+    padding: 20px;
+    border-top: 1px solid #e0e0e0;
+    gap: 10px;
 }
 
-.user-icon,
-.bot-icon {
+#user-input {
+    flex: 1;
+    padding: 12px 16px;
+    border: 1px solid #ddd;
+    border-radius: 25px;
+    outline: none;
     font-size: 14px;
 }
 
-.user-name,
-.bot-name {
+#user-input:focus {
+    border-color: #667eea;
+}
+
+#send-btn {
+    padding: 12px 20px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    border-radius: 25px;
+    cursor: pointer;
+    font-size: 14px;
     font-weight: 500;
+    transition: all 0.3s ease;
 }
 
-.timestamp {
-    margin-left: auto;
-    font-size: 11px;
+#send-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
 }
 
-.message-text {
-    line-height: 1.5;
-    word-wrap: break-word;
-}
-
-/* Typing Indicator */
-.typing-indicator .message-content {
-    background: white;
-    border: 1px solid #e2e8f0;
-    padding: 16px;
-    width: fit-content;
-}
-
-.typing-animation {
+.typing-indicator .typing-dots {
     display: flex;
     gap: 4px;
 }
 
-.typing-animation span {
+.typing-dots span {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: #cbd5e0;
+    background: #999;
     animation: typing 1.4s infinite ease-in-out;
 }
 
-.typing-animation span:nth-child(1) { animation-delay: -0.32s; }
-.typing-animation span:nth-child(2) { animation-delay: -0.16s; }
+.typing-dots span:nth-child(1) { animation-delay: -0.32s; }
+.typing-dots span:nth-child(2) { animation-delay: -0.16s; }
 
 @keyframes typing {
-    0%, 80%, 100% {
-        transform: scale(0);
+    0%, 80%, 100% { 
+        transform: scale(0.8);
         opacity: 0.5;
     }
-    40% {
+    40% { 
         transform: scale(1);
         opacity: 1;
     }
 }
 
-/* Quick Actions */
-.quick-actions {
-    padding: 12px 20px;
-    background: white;
-    border-top: 1px solid #e2e8f0;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
+.chart-container {
+    margin-top: 10px;
 }
 
-.quick-action {
-    background: #f7fafc;
-    border: 1px solid #e2e8f0;
-    color: #4a5568;
-    padding: 6px 12px;
-    border-radius: 12px;
-    font-size: 12px;
-    cursor: pointer;
-    transition: all 0.2s ease;
+@media (max-width: 480px) {
+    .chatbot-window {
+        width: 320px;
+        height: 450px;
+    }
 }
+`;
 
-.quick-action:hover {
-    background: #667eea;
-    color: white;
-    border-color: #667eea;
-}
-
-/* Footer */
-.chatbot-footer {
-    background: white;
-    border-top: 1px solid #e2e8f0;
-    padding: 16px;
-}
-
-.input-container {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    background: #f7fafc;
-    border: 1px solid #e2e8f0;
-    border-radius: 24px;
-    padding: 8px 12px;
-    transition: border-color 0.2s ease;
-}
-
-.input-container:focus-within {
-    border-color: #667eea;
-    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-}
-
-.chat-input {
-    flex: 1;
-    border: none;
-    background: transparent;
-    outline: none;
-    padding: 8px 0;
-    font-size: 14px;
-    color: #2d3748;
-}
-
-.chat-input::placeholder {
-    color: #a0aec0;
-}
-
-.voice-button,
-.send-button {
-    background: #667eea;
-    border: none;
-    color: white;
-    padding: 8px;
-    border-radius: 50
+// HTML Template (if needed as separate file)
+const htmlTemplate = `
+<div id="chatbot-root">
+    <!-- Chatbot will be dynamically inserted here -->
+</div>
+`;
