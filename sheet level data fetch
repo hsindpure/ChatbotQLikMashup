@@ -1,0 +1,196 @@
+define([
+  "qlik",
+  "jquery",
+], function (qlik, $) {
+  return {
+    initialProperties: {
+      sheetId: "", // you can allow selecting sheet id if you want later
+    },
+    definition: {
+      type: "items",
+      component: "accordion",
+      items: {
+        settings: {
+          uses: "settings",
+        },
+      },
+    },
+    support: {
+      snapshot: true,
+      export: true,
+      exportData: true,
+    },
+    paint: function ($element, layout) {
+      var self = this;
+      var app = qlik.currApp();
+
+      $element.html("<div>Fetching data from all objects on this sheet...</div>");
+      
+      // Utility function to fetch data from HyperCube of an object
+      function fetchObjectData(model) {
+        return model.getLayout().then(function (layout) {
+          // Check if object has hypercube
+          if (
+            layout.qHyperCube &&
+            layout.qHyperCube.qSize.qcy > 0 &&
+            layout.qHyperCube.qMeasureInfo.length > 0
+          ) {
+            // Get data pages
+            // For demo get first 100 rows 
+            var page = {
+              qTop: 0,
+              qLeft: 0,
+              qHeight: Math.min(layout.qHyperCube.qSize.qcy, 100),
+              qWidth: layout.qHyperCube.qSize.qcx,
+            };
+            return model.getHyperCubeData("/qHyperCubeDef", [page]).then(function (dataPages) {
+              return {
+                id: layout.qInfo.qId,
+                title: layout.title || layout.qInfo.qId,
+                data: dataPages[0].qMatrix,
+                columns: layout.qHyperCube.qDimensionInfo.concat(layout.qHyperCube.qMeasureInfo).map(function(field) {
+                  return field.qFallbackTitle;
+                }),
+              };
+            });
+          } else {
+            // No hypercube, no data
+            return Promise.resolve({
+              id: layout.qInfo.qId,
+              title: layout.title || layout.qInfo.qId,
+              data: [],
+              columns: [],
+            });
+          }
+        });
+      }
+
+      // Get current sheet id from context (for Qlik Sense Enterprise on Windows / SaaS)
+      // layout.qInfo and layout.qMeta may not contain sheet info directly
+      // So we use the selection of sheet by reading from the context, or fallback:
+      // alternatively, you may hardcode or pass via property - Here, we'll try to get sheetId from context or URL:
+      var sheetId = null;
+
+      try {
+        // Try to get sheet id from URL hash
+        var hash = window.location.hash;
+        if (hash) {
+          var m = hash.match(/sheet=([^&]+)/);
+          if (m && m[1]) {
+            sheetId = m[1];
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
+
+      if (!sheetId) {
+        // fallback: use the current object's parent id as sheet id
+        // Note: layout.qInfo.qId is the id of this extension, but we want sheet id
+        // Qlik doesn't expose sheet id in extension context easily
+        // If you want to hardcode sheet id, set layout.sheetId property
+        sheetId = layout.sheetId || null;
+      }
+
+      if (!sheetId) {
+        $element.append("<div style='color:red'>Unable to determine current sheet ID.</div>");
+        return;
+      }
+
+      // Get list of objects on the current sheet
+      app.createCube(
+        {
+          qDimensions: [],
+          qMeasures: [],
+          qInitialDataFetch: [{ qTop: 0, qLeft: 0, qHeight: 1, qWidth: 1 }],
+          qAppObjectListDef: {
+            qType: "visualization",
+            qData: {
+              info: "/qMeta",
+              title: "/qMeta/title",
+              description: "/qMeta/description",
+              tags: "/qMeta/tags",
+              thumbnail: "/thumbnail",
+              cells: "/cells",
+              sheetId: "/sheetId",
+            },
+          },
+        },
+        function (reply) {
+          var objects = reply.qAppObjectList.qItems;
+
+          // Filter objects that belong to the current sheet
+          var objsOnSheet = objects.filter(function (obj) {
+            // Not all Qlik versions return sheetId on qAppObjectList qItems
+            // Alternative approach:
+            // Check obj.cells contain current sheet id
+            if (obj.cells) {
+              for (var i = 0; i < obj.cells.length; i++) {
+                if (obj.cells[i].sheetId === sheetId) {
+                  return true;
+                }
+              }
+            }
+            // fallback false
+            return false;
+          });
+
+          // If no objects found on sheet fallback to all objects (or notify)
+          if (objsOnSheet.length === 0) {
+            $element.append(`<div>No objects found on current sheet [${sheetId}]. Attempting to fetch all objects.</div>`);
+            objsOnSheet = objects; // fetch all objects in app
+          }
+
+          if (objsOnSheet.length === 0) {
+            $element.append("<div>No visualization objects found in the app.</div>");
+            return;
+          }
+
+          $element.append(`<div>Found ${objsOnSheet.length} objects on the sheet ${sheetId}</div><br/>`);
+
+          var promises = objsOnSheet.map(function (obj) {
+            return app.getObject(obj.qInfo.qId).then(fetchObjectData);
+          });
+
+          Promise.all(promises)
+            .then(function (results) {
+              // Display or handle all objects' data here
+              var html = "<h3>Data from all objects on this sheet</h3>";
+
+              results.forEach(function (objData) {
+                html += `<h4>${objData.title} (ID: ${objData.id})</h4>`;
+
+                if (objData.data.length === 0) {
+                  html += "<i>No tabular data available (object may not have hypercube)</i><br/>";
+                  return;
+                }
+
+                // Render simple table
+                html += "<table border='1' cellspacing='0' cellpadding='4' style='border-collapse:collapse;'><thead><tr>";
+                objData.columns.forEach(function (col) {
+                  html += `<th>${col}</th>`;
+                });
+                html += "</tr></thead><tbody>";
+                objData.data.forEach(function (row) {
+                  html += "<tr>";
+                  row.forEach(function (cell) {
+                    html += `<td>${cell.qText}</td>`;
+                  });
+                  html += "</tr>";
+                });
+                html += "</tbody></table><br/>";
+              });
+
+              $element.html(html);
+            })
+            .catch(function (err) {
+              $element.html("<div style='color:red'>Error while fetching object data: " + err.message + "</div>");
+            });
+        }
+      );
+
+      // Return nothing since we update $element asynchronously
+      return;
+    },
+  };
+});
