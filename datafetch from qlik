@@ -1,0 +1,102 @@
+define([
+  "qlik",
+  "jquery"
+], function (qlik, $) {
+  return {
+    initialProperties: {},
+    definition: {
+      type: "items",
+      component: "accordion",
+      items: {}
+    },
+    paint: function ($element, layout) {
+      var app = qlik.currApp(this);
+
+      // Clear previous content
+      $element.empty();
+
+      // Show loading
+      $element.append($("<div>Loading data from all objects...</div>"));
+
+      // Get all objects on the current app
+      app.getObjects().then(function (objects) {
+        $element.empty();
+
+        if (!objects || objects.length === 0) {
+          $element.append($("<div>No objects found in this app.</div>"));
+          return;
+        }
+
+        // Container for showing results
+        var $container = $("<div></div>");
+        $element.append($container);
+
+        // For each object, get its layout (which contains data)
+        var promises = objects.map(function (obj) {
+          return app.getObject(obj.id).then(function (vis) {
+            return vis.getLayout().then(function (layout) {
+              return { id: obj.id, title: layout.title || obj.id, layout: layout };
+            });
+          });
+        });
+
+        Promise.all(promises).then(function (results) {
+          results.forEach(function (res) {
+            var $objDiv = $("<div></div>").css({
+              border: "1px solid #ccc",
+              margin: "10px",
+              padding: "10px"
+            });
+
+            $objDiv.append($("<h3></h3>").text("Object: " + res.title + " (" + res.id + ")"));
+
+            // Try to show data - for many objects, data is in qHyperCube/qListObject/qTree
+            var dataText = "";
+
+            if (res.layout.qHyperCube) {
+              try {
+                var qDataPages = res.layout.qHyperCube.qDataPages;
+
+                qDataPages.forEach(function(page, idx){
+                  dataText += "Page " + (idx + 1) + ":\n";
+                  page.qMatrix.forEach(function(row){
+                    row.forEach(function(cell){
+                      dataText += cell.qText + "\t";
+                    });
+                    dataText += "\n";
+                  });
+                });
+              } catch (e) {
+                dataText = "Error fetching data from hypercube: " + e.message;
+              }
+            } else if (res.layout.qListObject) {
+              try {
+                var values = res.layout.qListObject.qDataPages[0].qMatrix.map(function (row) {
+                  return row[0].qText;
+                });
+                dataText = values.join(", ");
+              } catch (e) {
+                dataText = "Error fetching data from list object: " + e.message;
+              }
+            } else {
+              dataText = "No hypercube or list object data available for this object.";
+            }
+
+            var $pre = $("<pre></pre>").text(dataText);
+            $objDiv.append($pre);
+
+            $container.append($objDiv);
+          });
+        }).catch(function (err) {
+          $element.empty();
+          $element.append($("<div>Error fetching objects data: " + err.message + "</div>"));
+        });
+      }).catch(function (err) {
+        $element.empty();
+        $element.append($("<div>Error getting objects from app: " + err.message + "</div>"));
+      });
+
+      return qlik.Promise.resolve();
+    }
+  };
+});
