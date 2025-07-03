@@ -1,0 +1,132 @@
+define([
+  "qlik",
+  "jquery",
+], function (qlik, $) {
+  return {
+    initialProperties: {},
+    definition: {
+      type: "items",
+      component: "accordion",
+      items: {
+        settings: {
+          uses: "settings",
+        },
+      },
+    },
+    support: {
+      snapshot: true,
+      export: true,
+      exportData: true,
+    },
+    paint: function ($element, layout) {
+      var self = this;
+      var app = qlik.currApp();
+
+      $element.html("<div>Fetching data from all objects in this app...</div>");
+
+      function fetchObjectData(model) {
+        return model.getLayout().then(function (layout) {
+          // Check for hypercube presence
+          if (
+            layout.qHyperCube &&
+            layout.qHyperCube.qSize.qcy > 0 &&
+            layout.qHyperCube.qMeasureInfo.length > 0
+          ) {
+            var page = {
+              qTop: 0,
+              qLeft: 0,
+              qHeight: Math.min(layout.qHyperCube.qSize.qcy, 100), // limit to 100 rows max
+              qWidth: layout.qHyperCube.qSize.qcx,
+            };
+            return model.getHyperCubeData("/qHyperCubeDef", [page]).then(function (dataPages) {
+              return {
+                id: layout.qInfo.qId,
+                title: layout.title || layout.qInfo.qId,
+                data: dataPages[0].qMatrix,
+                columns: layout.qHyperCube.qDimensionInfo.concat(layout.qHyperCube.qMeasureInfo).map(function (field) {
+                  return field.qFallbackTitle;
+                }),
+              };
+            });
+          } else {
+            return Promise.resolve({
+              id: layout.qInfo.qId,
+              title: layout.title || layout.qInfo.qId,
+              data: [],
+              columns: [],
+            });
+          }
+        });
+      }
+
+      // Get all visualization objects in the app
+      app.createCube(
+        {
+          qDimensions: [],
+          qMeasures: [],
+          qInitialDataFetch: [{ qTop: 0, qLeft: 0, qHeight: 1, qWidth: 1 }],
+          qAppObjectListDef: {
+            qType: "visualization",
+            qData: {
+              info: "/qMeta",
+              title: "/qMeta/title",
+              description: "/qMeta/description",
+              tags: "/qMeta/tags",
+              thumbnail: "/thumbnail",
+              cells: "/cells",
+              sheetId: "/sheetId",
+            },
+          },
+        },
+        function (reply) {
+          var objects = reply.qAppObjectList.qItems;
+
+          if (objects.length === 0) {
+            $element.html("<div>No visualization objects found in the app.</div>");
+            return;
+          }
+
+          $element.html(`<div>Found ${objects.length} objects in the app. Fetching their data...</div><br/>`);
+
+          var promises = objects.map(function (obj) {
+            return app.getObject(obj.qInfo.qId).then(fetchObjectData);
+          });
+
+          Promise.all(promises)
+            .then(function (results) {
+              var html = "<h3>Data from all objects in the app</h3>";
+
+              results.forEach(function (objData) {
+                html += `<h4>${objData.title} (ID: ${objData.id})</h4>`;
+
+                if (objData.data.length === 0) {
+                  html += "<i>No tabular data available (object may not have hypercube)</i><br/>";
+                  return;
+                }
+
+                html += "<table border='1' cellspacing='0' cellpadding='4' style='border-collapse:collapse;margin-bottom:20px;'><thead><tr>";
+                objData.columns.forEach(function (col) {
+                  html += `<th>${col}</th>`;
+                });
+                html += "</tr></thead><tbody>";
+                objData.data.forEach(function (row) {
+                  html += "<tr>";
+                  row.forEach(function (cell) {
+                    html += `<td>${cell.qText}</td>`;
+                  });
+                  html += "</tr>";
+                });
+                html += "</tbody></table>";
+              });
+
+              $element.html(html);
+            })
+            .catch(function (err) {
+              $element.html("<div style='color:red'>Error while fetching object data: " + err.message + "</div>");
+            });
+        }
+      );
+      // No return needed since paint is async
+    },
+  };
+});
